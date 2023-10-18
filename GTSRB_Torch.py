@@ -16,10 +16,10 @@ import argparse
 
 def parseArguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", help="batch size", default=64, dest="batch_size")
-    parser.add_argument("--lr", help="learning rate", default=1e-3, dest="lr")
-    parser.add_argument("--epochs", help="number of epochs", default=20, dest="epochs")
-    parser.add_argument("--model_path", help="path to save model", default="model.pth", dest="model_path")
+    parser.add_argument("--batch_size", help="batch size", default=64, dest="batch_size", type=int)
+    parser.add_argument("--lr", help="learning rate", default=1e-3, dest="lr", type=float)
+    parser.add_argument("--epochs", help="number of epochs", default=20, dest="epochs", type=int)
+    parser.add_argument("--model_path", help="path to save model", default="model.pth", dest="model_path", type=str)
     return parser.parse_args()
 
 args = parseArguments()
@@ -65,7 +65,7 @@ classes = range(43+1)
 
 
 # Create data loaders
-BATCH_SIZE = 64
+BATCH_SIZE = args.batch_size
 trainloader = DataLoader(GTSRB_train, batch_size=BATCH_SIZE, shuffle=True)
 testloader = DataLoader(GTSRB_test, batch_size=BATCH_SIZE, shuffle=True)
 
@@ -74,17 +74,33 @@ for X,y in testloader:
     print(f"Shape of y: {y.shape} {y.dtype}")
     break
 
+# Helper functions
 def matplotlib_imshow(img, one_channel=False):
     if one_channel:
         img = img.mean(dim=0)
     img = img / 2 + 0.5
     img = img.cpu()
     npimg = img.numpy()
-    print(npimg.shape)
     if one_channel:
         plt.imshow(npimg, cmap="Greys")
     else:
         plt.imshow(np.transpose(npimg, (1, 2, 0)))
+
+def images_to_probs(model, images):
+    output = model(images)
+    _, preds_tensor = torch.max(output, 1)
+    preds_tensor = preds_tensor.cpu()
+    preds = np.squeeze(preds_tensor.numpy())
+    return preds, [F.softmax(el, dim=0)[i].item() for i, el in zip(preds, output)]
+
+def plot_classes_preds(model, images, labels):
+    preds, probs = images_to_probs(model, images)
+    fig = plt.figure(figsize=(10, 10))
+    for idx in np.arange(4):
+        ax = fig.add_subplot(1, 4, idx+1, xticks=[], yticks=[])
+        matplotlib_imshow(images[idx], one_channel=True)
+        ax.set_title(f"{classes[preds[idx]]}, {probs[idx]*100:.1f}%\n(label: {classes[labels[idx]]})", size=20, color=("green" if preds[idx]==labels[idx].item() else "red"))
+    return fig
 
 # Create model
 class ConvelutionalNN(nn.Module):
@@ -160,6 +176,7 @@ for epoch in range(EPOCHS):
             writer.add_scalar('training loss', running_loss / 100, epoch * len(trainloader) + i)
             loss, current = loss.item(), (i+1) * len(inputs)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+            writer.add_figure('predictions vs. actuals', plot_classes_preds(model, inputs, labels), global_step=epoch*len(trainloader) + i)
             running_loss = 0.0
     model.eval()
     size = len(testloader.dataset)
