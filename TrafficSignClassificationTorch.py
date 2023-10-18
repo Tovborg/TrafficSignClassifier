@@ -10,6 +10,8 @@ import os
 import pandas as pd
 import torchvision
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+import torch.nn.functional as F
 
 device = (
     "cuda"
@@ -38,6 +40,9 @@ GTSRB_test = torchvision.datasets.GTSRB(
     download=True,
     transform=transforms,
 )
+
+classes = range(43+1)
+print(max(classes))
 
 # Create data loaders
 BATCH_SIZE = 64
@@ -112,43 +117,50 @@ matplotlib_imshow(img_grid, one_channel=True)
 writer.add_image('four_GTSRB_images', img_grid)
 
 writer.add_graph(model, images)
-writer.close()
 
-# Testing function
-def test(dataloader, model, loss_fn):
-    size = len(dataloader.dataset)
-    num_batches = len(dataloader)
-    model.eval()
-    test_loss, correct = 0, 0
-    with torch.no_grad():
-        for image, label in dataloader:
-            image,label = image.to(device), label.to(device)
-            pred = model(image)
-            test_loss += loss_fn(pred, label).item()
-            correct += (pred.argmax(1) == label).type(torch.float).sum().item()
-    test_loss /= num_batches
-    correct /= size
-    # retun test loss and accuracy
-    return test_loss, correct
+def train():
+    running_loss = 0.0
+    EPOCHS = 20
+    size = len(trainloader)
+    for epoch in range(EPOCHS):
+        print(f"Epoch {epoch+1}\n-------------------------------")
+        model.train()
+        for i, data in enumerate(trainloader, 0):
+            inputs, labels = data
+            inputs, labels = inputs.to(device), labels.to(device)
 
-def train(dataloader, model, loss_fn, optimizer):
-    size = len(dataloader.dataset)
-    model.train()
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
+            optimizer.zero_grad()
 
-        # Compute prediction error
-        pred = model(X)
-        loss = loss_fn(pred, y)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
 
-        # Backpropagation
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
+            running_loss += loss.item()
+            if i % 100 == 99:
+                writer.add_scalar('training loss', running_loss / 100, epoch * len(trainloader) + i)
+                loss, current = loss.item(), (i+1) * len(inputs)
+                print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+                running_loss = 0.0
+        model.eval()
+        size = len(testloader.dataset)
+        num_batches = len(testloader)
+        test_loss, correct = 0, 0
+        with torch.no_grad():
+            for image,label in testloader:
+                image,label = image.to(device), label.to(device)
+                pred = model(image)
+                test_loss += criterion(pred, label).item()
+                correct += (pred.argmax(1) == label).type(torch.float).sum().item()
+        test_loss /= num_batches
+        correct /= size
+        writer.add_scalar('accuracy', correct, epoch)
+        print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    print("Finished Training")
 
-        if batch % 100 == 0:
-            loss, current = loss.item(), (batch + 1) * len(X)
-            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
-    # return loss and accuracy
-    return loss
-    
+if __name__ == "__main__":
+    train()
+    torch.save(model.state_dict(), "./model.pth")
+    print("Saved PyTorch Model State to model.pth")
+    writer.close()
+
